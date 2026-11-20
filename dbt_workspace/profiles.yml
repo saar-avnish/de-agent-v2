@@ -1,0 +1,6 @@
+enterprise_dw:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: dev.duckdb

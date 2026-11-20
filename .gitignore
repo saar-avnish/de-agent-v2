@@ -1,0 +1,19 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+
+# dbt Runtime & Local DuckDB Artifacts
+dbt_workspace/target/
+dbt_workspace/logs/
+dbt_workspace/*.duckdb*
+dbt_workspace/.user.yml
+
+# Environment & Secrets
+.env

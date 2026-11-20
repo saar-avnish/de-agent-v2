@@ -1,0 +1,23 @@
+version: 2
+sources:
+  - name: raw_crm
+    description: Core transactional CRM data
+    schema: raw_crm
+    database: analytics
+    tables:
+      - name: orders
+        description: Inbound customer order headers
+        columns:
+          - name: id
+            data_type: integer
+            data_tests:
+              - unique
+              - not_null
+          - name: customer_id
+            data_type: integer
+            data_tests:
+              - not_null
+          - name: order_date
+            data_type: date
+          - name: amount
+            data_type: numeric

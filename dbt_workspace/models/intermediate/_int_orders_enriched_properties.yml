@@ -1,0 +1,16 @@
+version: 2
+models:
+  - name: int_orders_enriched
+    description: Kimball intermediate model 'int_orders_enriched' serving domain 'sales'.
+    config:
+      materialized: table
+    columns:
+      - name: order_id
+        data_type: integer
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_type: integer
+      - name: order_value_tier
+        data_type: varchar
