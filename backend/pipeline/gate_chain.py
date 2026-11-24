@@ -122,7 +122,11 @@ class GraphAndDbtGateHandler(GateHandler):
                 raise ValueError("Stage 2 requires a valid PlannerContract from Stage 1.")
 
             # 1. Kahn's DAG Sorter & Cycle Detection
-            topological_order = self.dag_sorter.sort(planner.models)
+            topological_order = self.dag_sorter.sort(
+                planner.models,
+                sources=planner.sources,
+                manifest_models=ctx.manifest_models,
+            )
 
             # 2. Kimball DRY Grain Checking
             self.dry_checker.validate(planner.models)

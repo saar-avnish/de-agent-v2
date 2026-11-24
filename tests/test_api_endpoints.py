@@ -184,3 +184,99 @@ def test_zero_disk_ephemeral_execution():
     repo_root = Path(__file__).resolve().parent.parent
     assert not (repo_root / "dbt_workspace").exists()
     assert not (repo_root / "dev.duckdb").exists()
+
+
+def test_cloud_finops_dw_api_endpoint_success():
+    payload = {
+        "planner": {
+            "project_name": "cloud_finops_dw",
+            "warehouse": "duckdb",
+            "domain": "finops",
+            "sources": [
+                {
+                    "name": "raw_aws_cur",
+                    "schema_name": "raw_aws_cur",
+                    "database": "analytics",
+                    "description": "AWS Cost and Usage Report raw ingestion",
+                    "tables": [
+                        {
+                            "name": "line_items",
+                            "columns": [
+                                {"name": "identity_line_item_id", "data_type": "varchar", "data_tests": ["unique", "not_null"]},
+                                {"name": "bill_payer_account_id", "data_type": "varchar", "data_tests": ["not_null"]},
+                                {"name": "line_item_unblended_cost", "data_type": "numeric"}
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "models": [
+                {
+                    "name": "stg_aws_cur",
+                    "layer": "staging",
+                    "domain": "finops",
+                    "estimated_row_count": 50000,
+                    "is_time_series": False,
+                    "grain": ["identity_line_item_id"],
+                    "dependencies": ["raw_aws_cur.line_items"],
+                    "columns": [
+                        {"name": "identity_line_item_id", "data_type": "varchar", "data_tests": ["unique", "not_null"]},
+                        {"name": "bill_payer_account_id", "data_type": "varchar", "data_tests": ["not_null"]},
+                        {"name": "line_item_unblended_cost", "data_type": "numeric"}
+                    ],
+                    "tdd_fixtures": [
+                        {
+                            "test_name": "test_stg_aws_cur_filtering",
+                            "given": [
+                                {
+                                    "input": "source('raw_aws_cur', 'line_items')",
+                                    "rows": [{"identity_line_item_id": "item_1", "bill_payer_account_id": "123", "line_item_unblended_cost": 15.5}]
+                                }
+                            ],
+                            "expect": {
+                                "rows": [{"identity_line_item_id": "item_1", "bill_payer_account_id": "123", "line_item_unblended_cost": 15.5}]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "int_aws_cur_daily",
+                    "layer": "intermediate",
+                    "domain": "finops",
+                    "estimated_row_count": 120000,
+                    "is_time_series": False,
+                    "grain": ["identity_line_item_id"],
+                    "dependencies": ["stg_aws_cur"],
+                    "columns": [
+                        {"name": "identity_line_item_id", "data_type": "varchar", "data_tests": ["unique", "not_null"]},
+                        {"name": "bill_payer_account_id", "data_type": "varchar"},
+                        {"name": "line_item_unblended_cost", "data_type": "numeric"}
+                    ],
+                    "tdd_fixtures": []
+                },
+                {
+                    "name": "fct_cloud_costs",
+                    "layer": "mart",
+                    "domain": "finops",
+                    "estimated_row_count": 2000000,
+                    "is_time_series": True,
+                    "grain": ["identity_line_item_id"],
+                    "dependencies": ["int_aws_cur_daily"],
+                    "columns": [
+                        {"name": "identity_line_item_id", "data_type": "varchar", "data_tests": ["unique", "not_null"]},
+                        {"name": "bill_payer_account_id", "data_type": "varchar"},
+                        {"name": "line_item_unblended_cost", "data_type": "numeric"}
+                    ],
+                    "tdd_fixtures": []
+                }
+            ]
+        }
+    }
+    resp = client.post("/api/stages/run-to-stage-2", json=payload)
+    assert resp.status_code == 200
+    report = resp.json()
+    assert report["success"] is True
+    assert report["short_circuited"] is False
+    assert len(report["stages"]) == 2
+    assert report["stages"][0]["status"] == "PASSED"
+    assert report["stages"][1]["status"] == "PASSED"

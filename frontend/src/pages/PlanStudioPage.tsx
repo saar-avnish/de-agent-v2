@@ -213,6 +213,105 @@ const TEMPLATES: Record<string, PlannerContract> = {
       },
     ],
   },
+  cloud_finops: {
+    project_name: 'cloud_finops_dw',
+    warehouse: 'duckdb',
+    domain: 'finops',
+    sources: [
+      {
+        name: 'raw_aws_cur',
+        schema_name: 'raw_aws_cur',
+        database: 'analytics',
+        description: 'AWS Cost and Usage Report raw ingestion',
+        tables: [
+          {
+            name: 'line_items',
+            description: 'Raw billing line items',
+            columns: [
+              { name: 'identity_line_item_id', data_type: 'varchar', data_tests: ['unique', 'not_null'] },
+              { name: 'bill_payer_account_id', data_type: 'varchar', data_tests: ['not_null'] },
+              { name: 'line_item_usage_start_date', data_type: 'timestamp' },
+              { name: 'line_item_unblended_cost', data_type: 'numeric' },
+              { name: 'product_product_name', data_type: 'varchar' },
+            ],
+          },
+        ],
+      },
+    ],
+    models: [
+      {
+        name: 'stg_aws_cur',
+        layer: 'staging',
+        domain: 'finops',
+        estimated_row_count: 50000,
+        is_time_series: false,
+        grain: ['identity_line_item_id'],
+        dependencies: ['raw_aws_cur.line_items'],
+        columns: [
+          { name: 'identity_line_item_id', data_type: 'varchar', data_tests: ['unique', 'not_null'] },
+          { name: 'bill_payer_account_id', data_type: 'varchar', data_tests: ['not_null'] },
+          { name: 'line_item_unblended_cost', data_type: 'numeric' },
+        ],
+        tdd_fixtures: [
+          {
+            test_name: 'test_stg_aws_cur_filtering',
+            description: 'Validate cost mapping and row ingestion',
+            given: [
+              {
+                input: "source('raw_aws_cur', 'line_items')",
+                rows: [
+                  {
+                    identity_line_item_id: 'item_1',
+                    bill_payer_account_id: '123456789012',
+                    line_item_unblended_cost: 15.5,
+                  },
+                ],
+              },
+            ],
+            expect: {
+              rows: [
+                {
+                  identity_line_item_id: 'item_1',
+                  bill_payer_account_id: '123456789012',
+                  line_item_unblended_cost: 15.5,
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        name: 'int_aws_cur_daily',
+        layer: 'intermediate',
+        domain: 'finops',
+        estimated_row_count: 120000,
+        is_time_series: false,
+        grain: ['identity_line_item_id'],
+        dependencies: ['stg_aws_cur'],
+        columns: [
+          { name: 'identity_line_item_id', data_type: 'varchar', data_tests: ['unique', 'not_null'] },
+          { name: 'bill_payer_account_id', data_type: 'varchar' },
+          { name: 'line_item_unblended_cost', data_type: 'numeric' },
+        ],
+        tdd_fixtures: [],
+      },
+      {
+        name: 'fct_cloud_costs',
+        layer: 'mart',
+        domain: 'finops',
+        estimated_row_count: 2000000,
+        is_time_series: true,
+        grain: ['identity_line_item_id'],
+        dependencies: ['int_aws_cur_daily'],
+        columns: [
+          { name: 'identity_line_item_id', data_type: 'varchar', data_tests: ['unique', 'not_null'] },
+          { name: 'bill_payer_account_id', data_type: 'varchar' },
+          { name: 'line_item_unblended_cost', data_type: 'numeric' },
+        ],
+        tdd_fixtures: [],
+      },
+    ],
+  },
   dag_cycle: {
     project_name: 'cyclical_pipeline',
     warehouse: 'duckdb',
@@ -357,6 +456,9 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
           </span>
           <button className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }} onClick={() => handleSelectTemplate('ecommerce')}>
             🛒 E-Commerce Medallion
+          </button>
+          <button className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }} onClick={() => handleSelectTemplate('cloud_finops')}>
+            ☁️ Cloud FinOps
           </button>
           <button className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }} onClick={() => handleSelectTemplate('saas_billing')}>
             💳 SaaS Billing

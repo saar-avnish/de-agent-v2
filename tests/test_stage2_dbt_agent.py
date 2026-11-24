@@ -272,3 +272,146 @@ def test_gate_chain_pipeline_end_to_end(base_planner_data, tmp_path):
     assert report.stages[0].success is True
     assert report.stages[1].stage_name == "Stage 2: Graph, Strategy & dbt Synthesis Gate"
     assert report.stages[1].success is True
+
+
+def test_dotted_dependency_resolves_to_source_in_sql_stub(tmp_path):
+    finops_planner_data = {
+        "project_name": "cloud_finops_dw",
+        "warehouse": "duckdb",
+        "domain": "finops",
+        "sources": [
+            {
+                "name": "raw_aws_cur",
+                "tables": [
+                    {
+                        "name": "line_items",
+                        "columns": [{"name": "identity_line_item_id", "data_type": "varchar"}]
+                    }
+                ]
+            }
+        ],
+        "models": [
+            {
+                "name": "stg_aws_cur",
+                "layer": "staging",
+                "domain": "finops",
+                "estimated_row_count": 50000,
+                "is_time_series": False,
+                "grain": ["identity_line_item_id"],
+                "dependencies": ["raw_aws_cur.line_items"],
+                "columns": [{"name": "identity_line_item_id", "data_type": "varchar"}],
+                "tdd_fixtures": []
+            }
+        ]
+    }
+    planner = PlannerContract.model_validate(finops_planner_data)
+    scaffolder = ProjectScaffolder(workspace_dir=tmp_path)
+    scaffolder.scaffold(planner)
+
+    stg_sql = tmp_path / "models" / "staging" / "stg_aws_cur.sql"
+    assert stg_sql.exists()
+    content = stg_sql.read_text(encoding="utf-8")
+    assert "{{ source('raw_aws_cur', 'line_items') }}" in content
+    assert "ref('raw_aws_cur.line_items')" not in content
+
+    adapter = DbtAdapter(project_dir=tmp_path, profiles_dir=tmp_path)
+    parse_result = adapter.parse()
+    assert parse_result.exit_code == 0
+    assert parse_result.success is True
+
+
+def test_cloud_finops_dw_pipeline_end_to_end(tmp_path):
+    finops_payload = {
+        "project_name": "cloud_finops_dw",
+        "warehouse": "duckdb",
+        "domain": "finops",
+        "sources": [
+            {
+                "name": "raw_aws_cur",
+                "schema_name": "raw_aws_cur",
+                "database": "analytics",
+                "description": "AWS Cost and Usage Report raw ingestion",
+                "tables": [
+                    {
+                        "name": "line_items",
+                        "columns": [
+                            {"name": "identity_line_item_id", "data_type": "varchar", "data_tests": ["unique", "not_null"]},
+                            {"name": "bill_payer_account_id", "data_type": "varchar", "data_tests": ["not_null"]},
+                            {"name": "line_item_unblended_cost", "data_type": "numeric"}
+                        ]
+                    }
+                ]
+            }
+        ],
+        "models": [
+            {
+                "name": "stg_aws_cur",
+                "layer": "staging",
+                "domain": "finops",
+                "estimated_row_count": 50000,
+                "is_time_series": False,
+                "grain": ["identity_line_item_id"],
+                "dependencies": ["raw_aws_cur.line_items"],
+                "columns": [
+                    {"name": "identity_line_item_id", "data_type": "varchar", "data_tests": ["unique", "not_null"]},
+                    {"name": "bill_payer_account_id", "data_type": "varchar", "data_tests": ["not_null"]},
+                    {"name": "line_item_unblended_cost", "data_type": "numeric"}
+                ],
+                "tdd_fixtures": [
+                    {
+                        "test_name": "test_stg_aws_cur_filtering",
+                        "given": [
+                            {
+                                "input": "source('raw_aws_cur', 'line_items')",
+                                "rows": [{"identity_line_item_id": "item_1", "bill_payer_account_id": "123", "line_item_unblended_cost": 15.5}]
+                            }
+                        ],
+                        "expect": {
+                            "rows": [{"identity_line_item_id": "item_1", "bill_payer_account_id": "123", "line_item_unblended_cost": 15.5}]
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "int_aws_cur_daily",
+                "layer": "intermediate",
+                "domain": "finops",
+                "estimated_row_count": 120000,
+                "is_time_series": False,
+                "grain": ["identity_line_item_id"],
+                "dependencies": ["stg_aws_cur"],
+                "columns": [
+                    {"name": "identity_line_item_id", "data_type": "varchar", "data_tests": ["unique", "not_null"]},
+                    {"name": "bill_payer_account_id", "data_type": "varchar"},
+                    {"name": "line_item_unblended_cost", "data_type": "numeric"}
+                ],
+                "tdd_fixtures": []
+            },
+            {
+                "name": "fct_cloud_costs",
+                "layer": "mart",
+                "domain": "finops",
+                "estimated_row_count": 2000000,
+                "is_time_series": True,
+                "grain": ["identity_line_item_id"],
+                "dependencies": ["int_aws_cur_daily"],
+                "columns": [
+                    {"name": "identity_line_item_id", "data_type": "varchar", "data_tests": ["unique", "not_null"]},
+                    {"name": "bill_payer_account_id", "data_type": "varchar"},
+                    {"name": "line_item_unblended_cost", "data_type": "numeric"}
+                ],
+                "tdd_fixtures": []
+            }
+        ]
+    }
+    planner = PlannerContract.model_validate(finops_payload)
+    chain = GateChainPipeline(workspace_dir=tmp_path)
+    report = chain.run(planner=planner)
+
+    assert report.success is True
+    assert report.short_circuited is False
+    assert len(report.stages) == 2
+    assert report.stages[0].stage_name == "Stage 1: Pydantic v2 Contract & PII Gate"
+    assert report.stages[0].status == "PASSED"
+    assert report.stages[1].stage_name == "Stage 2: Graph, Strategy & dbt Synthesis Gate"
+    assert report.stages[1].status == "PASSED"

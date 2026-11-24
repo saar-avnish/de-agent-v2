@@ -70,7 +70,7 @@ class YamlBuilder:
         }
         return yaml.dump(payload, Dumper=IndentedDumper, sort_keys=False, default_flow_style=False)
 
-    def build_model_properties_yaml(self, model: ModelSpec) -> str:
+    def build_model_properties_yaml(self, model: ModelSpec, known_sources: Optional[Dict[str, str]] = None) -> str:
         """Constructs model documentation, column contracts, data_tests, and dbt 1.8+ unit_tests."""
         strategy = self.router.resolve_strategy(model)
         config = strategy.get_config(model)
@@ -109,13 +109,24 @@ class YamlBuilder:
         if model.tdd_fixtures:
             unit_tests_list: List[Dict[str, Any]] = []
             for fix in model.tdd_fixtures:
+                given_list: List[Dict[str, Any]] = []
+                for g in fix.given:
+                    inp = g.input.strip()
+                    # Resolve dotted input e.g. "raw_aws_cur.line_items" -> source('raw_aws_cur', 'line_items')
+                    if "." in inp and not inp.startswith("source(") and not inp.startswith("ref("):
+                        parts = [p.strip().strip("'\"") for p in inp.split(".", 1)]
+                        formatted_input = f"source('{parts[0]}', '{parts[1]}')"
+                    elif known_sources and inp in known_sources:
+                        formatted_input = f"source('{known_sources[inp]}', '{inp}')"
+                    else:
+                        formatted_input = inp
+
+                    given_list.append({"input": formatted_input, "rows": g.rows})
+
                 ut_entry: Dict[str, Any] = {
                     "name": fix.test_name,
                     "model": model.name,
-                    "given": [
-                        {"input": g.input, "rows": g.rows}
-                        for g in fix.given
-                    ],
+                    "given": given_list,
                     "expect": {
                         "rows": fix.expect.rows
                     }

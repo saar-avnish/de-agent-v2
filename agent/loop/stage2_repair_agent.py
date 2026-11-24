@@ -85,7 +85,6 @@ class Stage2RepairAgent:
                 content = yf.read_text(encoding="utf-8")
                 yaml.safe_load(content)
             except yaml.YAMLError as ye:
-                # Attempt repair by re-dumping clean YAML
                 try:
                     fixed = re.sub(r":\s+([a-zA-Z0-9_]+)\s*\n", r': "\1"\n', content)
                     yf.write_text(fixed, encoding="utf-8")
@@ -96,7 +95,25 @@ class Stage2RepairAgent:
                 except Exception:
                     pass
 
-        # 2. Check for missing ref / source compilation errors
+        # 2. Check for erroneously generated ref('source.table') with a dot in any SQL file
+        for sql_file in self.workspace_dir.glob("models/**/*.sql"):
+            try:
+                content = sql_file.read_text(encoding="utf-8")
+                if re.search(r"\{\{\s*ref\(['\"]([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)['\"]\)\s*\}\}", content):
+                    fixed = re.sub(
+                        r"\{\{\s*ref\(['\"]([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)['\"]\)\s*\}\}",
+                        r"{{ source('\1', '\2') }}",
+                        content
+                    )
+                    sql_file.write_text(fixed, encoding="utf-8")
+                    return (
+                        f"Erroneous ref() with dot detected in {sql_file.name}",
+                        f"Converted ref() with dot to source() in {sql_file.name}",
+                    )
+            except Exception:
+                pass
+
+        # 3. Check for missing ref compilation errors
         if "depends on a node named" in combined_logs or "not found" in combined_logs:
             missing_match = re.search(r"node named '([a-zA-Z0-9_]+)'", combined_logs)
             if missing_match:

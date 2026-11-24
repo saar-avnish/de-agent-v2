@@ -2,7 +2,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import yaml
 from jinja2 import Template
 from backend.contracts.planner_schema import PlannerContract, ModelSpec, ModelLayer
@@ -82,6 +82,13 @@ class ProjectScaffolder:
         for d in [staging_dir, int_dir, marts_dir, seeds_dir, tests_dir, macros_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
+        # Build lookup table of declared source tables -> source name
+        known_sources: Dict[str, str] = {}
+        if planner.sources:
+            for src in planner.sources:
+                for tbl in src.tables:
+                    known_sources[tbl.name] = src.name
+
         # Clean stale models if clean_stale is enabled
         if clean_stale:
             active_models = {m.name for m in planner.models}
@@ -137,14 +144,14 @@ class ProjectScaffolder:
             elif model.layer == ModelLayer.MART:
                 target_dir = marts_dir
 
-            props_yaml = self.yaml_builder.build_model_properties_yaml(model)
+            props_yaml = self.yaml_builder.build_model_properties_yaml(model, known_sources=known_sources)
             props_file = target_dir / f"_{model.name}_properties.yml"
             props_file.write_text(props_yaml, encoding="utf-8")
             created_files.append(str(props_file))
 
             # Scaffold Stage 2 SQL stub so that `dbt parse` can compile the graph and validate unit tests
             sql_file = target_dir / f"{model.name}.sql"
-            sql_stub = self._generate_sql_stub(model)
+            sql_stub = self._generate_sql_stub(model, known_sources=known_sources)
             sql_file.write_text(sql_stub, encoding="utf-8")
             created_files.append(str(sql_file))
 
@@ -154,17 +161,38 @@ class ProjectScaffolder:
             "models_count": len(planner.models),
         }
 
-    def _generate_sql_stub(self, model: ModelSpec) -> str:
+    def _format_dependency(self, dep: str, known_sources: Optional[Dict[str, str]] = None) -> str:
+        """Formats an upstream dependency into a Jinja source() or ref() call.
+
+        - If dep is already formatted like `source(...)` or `ref(...)`, emits `{{ <dep> }}`.
+        - If dep contains a dot (e.g. `raw_aws_cur.line_items`), splits on dot into (src_name, tbl_name)
+          and emits `{{ source('raw_aws_cur', 'line_items') }}`.
+        - If dep matches a declared source table in planner.sources, resolves the source name and emits `{{ source(...) }}`.
+        - Otherwise, emits `{{ ref('<dep>') }}`.
+        """
+        dep = dep.strip()
+        if "source(" in dep or "ref(" in dep:
+            return f"{{{{ {dep} }}}}"
+
+        if "." in dep:
+            parts = [p.strip().strip("'\"") for p in dep.split(".", 1)]
+            return f"{{{{ source('{parts[0]}', '{parts[1]}') }}}}"
+
+        if known_sources and dep in known_sources:
+            src_name = known_sources[dep]
+            return f"{{{{ source('{src_name}', '{dep}') }}}}"
+
+        cleaned_dep = dep.strip("'\"")
+        return f"{{{{ ref('{cleaned_dep}') }}}}"
+
+    def _generate_sql_stub(self, model: ModelSpec, known_sources: Optional[Dict[str, str]] = None) -> str:
         """Generates minimal valid SQL stub resolving upstream refs/sources for compilation."""
         cols = [c.name for c in model.columns] if model.columns else ["*"]
         select_clause = ", ".join(cols) if cols != ["*"] else "*"
 
         if model.dependencies:
             primary_dep = model.dependencies[0]
-            if "source(" in primary_dep or "ref(" in primary_dep:
-                from_clause = f"{{{{ {primary_dep} }}}}"
-            else:
-                from_clause = f"{{{{ ref('{primary_dep}') }}}}"
+            from_clause = self._format_dependency(primary_dep, known_sources)
         elif model.layer == ModelLayer.STAGING:
             from_clause = "(select 1 as dummy) as stg_dummy"
         else:
