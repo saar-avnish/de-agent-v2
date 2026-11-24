@@ -29,15 +29,21 @@ export const GateMonitorPage: React.FC<GateMonitorPageProps> = ({
         });
     }
     fetchFiles();
-  }, [report]);
+  }, [report?.execution_id]);
 
   const fetchFiles = async () => {
     try {
       setLoadingFiles(true);
       const res = await apiClient.getWorkspaceFiles();
       setWorkspaceFiles(res.files || []);
-      if (res.files && res.files.length > 0 && !selectedFile) {
-        setSelectedFile(res.files[0]);
+      if (res.files && res.files.length > 0) {
+        // Keep current selected file if still exists, or default to first
+        setSelectedFile((prev) => {
+          if (prev && res.files.some((f) => f.path === prev.path)) {
+            return res.files.find((f) => f.path === prev.path) || res.files[0];
+          }
+          return res.files[0];
+        });
       }
     } catch (e) {
       console.error('Failed to fetch workspace files', e);
@@ -56,13 +62,24 @@ export const GateMonitorPage: React.FC<GateMonitorPageProps> = ({
   // Group files into 3 categorized buckets
   const filterFiles = () => {
     if (activeCategory === 'yaml') {
-      return workspaceFiles.filter((f) => f.extension === '.yml' || f.extension === '.yaml');
+      return workspaceFiles.filter(
+        (f) => f.category === 'yaml' || f.extension === '.yml' || f.extension === '.yaml'
+      );
     }
     if (activeCategory === 'sql') {
-      return workspaceFiles.filter((f) => f.extension === '.sql');
+      return workspaceFiles.filter(
+        (f) => f.category === 'sql' || f.extension === '.sql'
+      );
     }
     if (activeCategory === 'logs') {
-      return workspaceFiles.filter((f) => f.name === 'manifest.json' || f.name === 'dbt.log');
+      return workspaceFiles.filter(
+        (f) =>
+          f.category === 'logs' ||
+          f.name === 'manifest.json' ||
+          f.name === 'dbt.log' ||
+          f.extension === '.log' ||
+          f.extension === '.json'
+      );
     }
     return workspaceFiles;
   };
@@ -75,7 +92,7 @@ export const GateMonitorPage: React.FC<GateMonitorPageProps> = ({
         <div className="card" style={{ textAlign: 'center', padding: '3.5rem' }}>
           <h2 style={{ marginBottom: '1rem', color: '#f8fafc' }}>No Pipeline Executions Recorded</h2>
           <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', maxWidth: '500px', margin: '0 auto 1.5rem auto' }}>
-            Configure your data contract in Plan Studio and click "Run Validation &amp; Synthesis" to trigger the automated 2-Stage gate pipeline.
+            Configure your data engineering contract in Plan Studio and click "Run Validation &amp; Synthesis" to trigger the automated 2-Stage gate pipeline.
           </p>
           <button className="btn btn-primary" onClick={onBackToStudio}>
             &larr; Go to Plan Studio
@@ -90,23 +107,33 @@ export const GateMonitorPage: React.FC<GateMonitorPageProps> = ({
   const stage1Status = stage1 ? stage1.status : 'SKIPPED';
   const stage2Status = stage2 ? stage2.status : (report.short_circuited ? 'SKIPPED' : 'PENDING');
 
+  const totalDurationMs = report.stages.reduce((acc, s) => acc + (s.duration_ms || 0), 0);
+
   return (
     <div className="page-content">
+      {/* Top Header Bar */}
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
-          <h1 className="page-title">Page 2: Gate Observability & Artifacts Inspector</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+            <h1 className="page-title" style={{ margin: 0 }}>Gate Observability &amp; Artifacts</h1>
+            <span
+              className={`badge ${report.success ? 'badge-passed' : 'badge-failed'}`}
+              style={{ fontSize: '0.85rem', padding: '0.35rem 0.75rem' }}
+            >
+              {report.success ? 'PIPELINE PASSED' : 'PIPELINE FAILED'}
+            </span>
+          </div>
           <p className="page-desc">
-            End-to-end telemetry across Stage 1 (Contract &amp; PII Gate) and Stage 2 (Graph, Strategy &amp; dbt Synthesis Gate).
-            Inspect GoF execution traces and categorized dbt 1.8+ artifacts.
+            Execution ID: <code style={{ color: '#38bdf8' }}>{report.execution_id}</code> • Total Runtime: <strong>{totalDurationMs.toFixed(1)} ms</strong> • Timestamp: {new Date(report.timestamp).toLocaleString()}
           </p>
         </div>
 
         <button className="btn btn-secondary" onClick={onBackToStudio}>
-          &larr; Edit Plan in Studio
+          &larr; Back to Plan Studio
         </button>
       </div>
 
-      {/* 2-Stage Stepper Display */}
+      {/* 2-Stage Gate Stepper */}
       <div className="stepper-container" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
         {/* Stage 1 */}
         <div className={`step-card ${stage1Status.toLowerCase()}`}>
@@ -120,7 +147,7 @@ export const GateMonitorPage: React.FC<GateMonitorPageProps> = ({
           </p>
           {stage1 && (
             <div style={{ fontSize: '0.75rem', color: '#38bdf8', marginTop: '0.6rem' }}>
-              Duration: {stage1.duration_ms} ms • PII Detected: {stage1.details?.pii_columns_detected || 0}
+              Duration: {stage1.duration_ms} ms • Models: {stage1.details?.models_count || 0} • PII Columns: {stage1.details?.pii_columns_detected || 0}
             </div>
           )}
         </div>
@@ -133,11 +160,11 @@ export const GateMonitorPage: React.FC<GateMonitorPageProps> = ({
           </div>
           <div className="step-title">Stage 2: Graph, Strategy &amp; dbt Synthesis Gate</div>
           <p style={{ fontSize: '0.825rem', color: '#94a3b8', marginTop: '0.25rem' }}>
-            Kahn's DAG sort, DRY grains, Blast Radius _v2, GoF Strategy/Builder &amp; self-healing dbt parse.
+            Kahn's DAG sort, DRY grains, Blast Radius _v2, GoF Strategy/Builder &amp; bounded self-healing dbt parse.
           </p>
           {stage2 && (
             <div style={{ fontSize: '0.75rem', color: '#38bdf8', marginTop: '0.6rem' }}>
-              Duration: {stage2.duration_ms} ms • Healing Retries: {stage2.details?.healing_attempts || 0}
+              Duration: {stage2.duration_ms} ms • Healing Attempts: {stage2.details?.healing_attempts || 0}
             </div>
           )}
         </div>
@@ -184,7 +211,7 @@ export const GateMonitorPage: React.FC<GateMonitorPageProps> = ({
                 </div>
 
                 <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>
-                  Latency: <strong>{stage.duration_ms} ms</strong> • Timestamp: {new Date(stage.started_at).toLocaleTimeString()}
+                  Latency: <strong>{stage.duration_ms} ms</strong> • Started: {new Date(stage.started_at).toLocaleTimeString()}
                 </div>
 
                 {stage.errors && stage.errors.length > 0 && (
@@ -208,7 +235,7 @@ export const GateMonitorPage: React.FC<GateMonitorPageProps> = ({
                       fontSize: '0.75rem',
                       color: '#94a3b8',
                       overflowX: 'auto',
-                      maxHeight: '180px',
+                      maxHeight: '190px',
                     }}
                   >
                     {JSON.stringify(stage.details, null, 2)}
@@ -244,7 +271,7 @@ export const GateMonitorPage: React.FC<GateMonitorPageProps> = ({
           </div>
 
           {/* Category Filter Pills */}
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', flexWrap: 'wrap' }}>
             <button
               className={`btn ${activeCategory === 'all' ? 'btn-primary' : 'btn-secondary'}`}
               style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
@@ -276,7 +303,7 @@ export const GateMonitorPage: React.FC<GateMonitorPageProps> = ({
           </div>
 
           {loadingFiles ? (
-            <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>Loading workspace files...</div>
+            <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>Loading workspace artifacts...</div>
           ) : filteredFiles.length === 0 ? (
             <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>
               No files found in selected category.
@@ -284,7 +311,7 @@ export const GateMonitorPage: React.FC<GateMonitorPageProps> = ({
           ) : (
             <div>
               {/* File Selector Tabs */}
-              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1rem', maxHeight: '100px', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '1rem', maxHeight: '110px', overflowY: 'auto' }}>
                 {filteredFiles.map((f) => (
                   <button
                     key={f.path}
@@ -300,11 +327,11 @@ export const GateMonitorPage: React.FC<GateMonitorPageProps> = ({
               {selectedFile && (
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', fontSize: '0.8rem', color: '#94a3b8' }}>
-                    <span>Path: <code>dbt_workspace/{selectedFile.path}</code></span>
+                    <span>Path: <code>{selectedFile.path}</code></span>
                     <span>Size: <strong>{selectedFile.size_bytes.toLocaleString()}</strong> bytes</span>
                   </div>
 
-                  <pre className="code-viewer" style={{ maxHeight: '380px' }}>
+                  <pre className="code-viewer" style={{ maxHeight: '390px' }}>
                     {selectedFile.content}
                   </pre>
                 </div>

@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from backend.contracts.planner_schema import ModelSpec
+from backend.storage.artifact_store import artifact_store
 
 
 class BreakingChangeError(Exception):
@@ -29,6 +30,19 @@ class BlastRadiusAnalyzer:
         new_models: List[ModelSpec],
         manifest_models: Optional[Dict[str, Any]] = None
     ) -> BlastRadiusReport:
+        # If manifest_models not explicitly passed, hydrate from latest artifact in store
+        if manifest_models is None:
+            latest_manifest = artifact_store.get_latest_manifest()
+            if latest_manifest and "nodes" in latest_manifest:
+                # Extract model columns from manifest nodes
+                manifest_models = {}
+                for node_id, node_data in latest_manifest.get("nodes", {}).items():
+                    if node_data.get("resource_type") == "model":
+                        model_name = node_data.get("name")
+                        manifest_models[model_name] = {
+                            "columns": {c_name: c_info for c_name, c_info in node_data.get("columns", {}).items()}
+                        }
+
         if not manifest_models:
             return BlastRadiusReport(is_breaking=False, is_permitted_with_v2=False, changes=[])
 
@@ -36,9 +50,7 @@ class BlastRadiusAnalyzer:
         is_breaking = False
         is_permitted_with_v2 = False
 
-        # Build mapping of new models and their base names (e.g., stg_orders_v2 -> stg_orders)
         for model in new_models:
-            # Check direct match or base match
             base_name = model.name[:-3] if model.name.endswith("_v2") else model.name
             target_manifest = manifest_models.get(model.name) or manifest_models.get(base_name)
 
@@ -58,7 +70,6 @@ class BlastRadiusAnalyzer:
                             )
                         )
 
-                    # Check versioning enforcement
                     if model.name.endswith("_v2"):
                         is_permitted_with_v2 = True
                     else:

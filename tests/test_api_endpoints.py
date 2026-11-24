@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 from starlette.testclient import TestClient
 from backend.main import app
 from backend.api import routes
@@ -8,7 +9,7 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def isolate_workspace(tmp_path):
-    """Isolates the dbt workspace in a temporary folder during API tests to protect live dbt_workspace/."""
+    """Isolates the dbt workspace in a temporary folder during API tests to protect live workspace."""
     ws = tmp_path / "api_test_workspace"
     ws.mkdir(parents=True, exist_ok=True)
     routes.set_workspace_dir(ws)
@@ -80,6 +81,15 @@ def test_dbt_init_endpoint():
     })
     assert resp.status_code == 200
     assert resp.json()["status"] == "INITIALIZED"
+    assert resp.json()["warehouse"] == "duckdb"
+
+
+def test_get_runtime_configuration():
+    resp = client.get("/api/dbt/runtime")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "warehouse" in data
+    assert "status" in data
 
 
 def test_run_stages_endpoint_success():
@@ -131,6 +141,19 @@ def test_get_execution_by_id():
     assert resp.json()["execution_id"] == exec_id
 
 
+def test_get_execution_artifacts():
+    payload = sample_payload()
+    run_resp = client.post("/api/stages/run-to-stage-2", json=payload)
+    exec_id = run_resp.json()["execution_id"]
+
+    resp = client.get(f"/api/stages/executions/{exec_id}/artifacts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["execution_id"] == exec_id
+    assert "artifacts" in data
+    assert len(data["artifacts"]) > 0
+
+
 def test_workspace_files_filtering(isolate_workspace):
     # Create valid files and binary/excluded files
     (isolate_workspace / "models" / "staging").mkdir(parents=True, exist_ok=True)
@@ -148,3 +171,16 @@ def test_workspace_files_filtering(isolate_workspace):
     assert "_properties.yml" in file_names
     assert "dev.duckdb" not in file_names
     assert ".user.yml" not in file_names
+
+
+def test_zero_disk_ephemeral_execution():
+    """Verifies that running without an isolated workspace directory leaves zero files on host disk."""
+    routes.reset_workspace_dir()
+    payload = sample_payload()
+    resp = client.post("/api/stages/run-to-stage-2", json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+
+    repo_root = Path(__file__).resolve().parent.parent
+    assert not (repo_root / "dbt_workspace").exists()
+    assert not (repo_root / "dev.duckdb").exists()

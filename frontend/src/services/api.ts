@@ -3,6 +3,7 @@ import {
   ExecutionReport,
   WorkspaceFile,
   HealthStatus,
+  RuntimeConfig,
 } from '../types';
 
 const API_BASE = '/api';
@@ -12,6 +13,14 @@ export const apiClient = {
     const res = await fetch('/health');
     if (!res.ok) {
       throw new Error('Health check failed');
+    }
+    return res.json();
+  },
+
+  async getRuntimeConfig(): Promise<RuntimeConfig> {
+    const res = await fetch(`${API_BASE}/dbt/runtime`);
+    if (!res.ok) {
+      throw new Error('Failed to retrieve runtime configuration');
     }
     return res.json();
   },
@@ -63,6 +72,14 @@ export const apiClient = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Execution not found' }));
       throw new Error(err.detail || 'Execution not found');
+    }
+    return res.json();
+  },
+
+  async getExecutionArtifacts(execId: string): Promise<{ execution_id: string; count: number; artifacts: WorkspaceFile[] }> {
+    const res = await fetch(`${API_BASE}/stages/executions/${execId}/artifacts`);
+    if (!res.ok) {
+      throw new Error('Failed to fetch execution artifacts');
     }
     return res.json();
   },

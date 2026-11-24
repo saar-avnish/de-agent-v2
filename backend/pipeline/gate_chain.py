@@ -1,4 +1,5 @@
 from __future__ import annotations
+import tempfile
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -14,6 +15,8 @@ from agent.analyzer.dry_checker import DryGrainChecker
 from agent.synthesizer.project_scaffolder import ProjectScaffolder
 from backend.dbt_runtime.dbt_adapter import DbtAdapter
 from agent.loop.stage2_repair_agent import Stage2RepairAgent
+from backend.storage.artifact_store import artifact_store
+from backend.storage.execution_store import execution_store
 
 
 class PipelineContext(BaseModel):
@@ -132,7 +135,7 @@ class GraphAndDbtGateHandler(GateHandler):
             scaffold_result = scaffolder.scaffold(planner)
 
             # 5. dbt parse validation & Bounded Self-Healing Loop
-            adapter = DbtAdapter(project_dir=ctx.workspace_dir)
+            adapter = DbtAdapter(project_dir=ctx.workspace_dir, profiles_dir=ctx.workspace_dir)
             repair_agent = Stage2RepairAgent(workspace_dir=ctx.workspace_dir, adapter=adapter)
             healing_report = repair_agent.execute_and_heal()
 
@@ -183,8 +186,8 @@ class GraphAndDbtGateHandler(GateHandler):
 class GateChainPipeline:
     """Orchestrator linking Stage 1 -> Stage 2 in a clean GoF Chain of Responsibility."""
 
-    def __init__(self, workspace_dir: str | Path):
-        self.workspace_dir = str(Path(workspace_dir).resolve())
+    def __init__(self, workspace_dir: Optional[str | Path] = None):
+        self.workspace_dir = str(Path(workspace_dir).resolve()) if workspace_dir else None
 
     def run(
         self,
@@ -202,21 +205,35 @@ class GateChainPipeline:
             short_circuited=False,
         )
 
-        ctx = PipelineContext(
-            execution_id=execution_id,
-            planner=planner,
-            raw_planner=raw_planner,
-            workspace_dir=self.workspace_dir,
-            manifest_models=manifest_models,
-            report=report,
-        )
+        def _execute_in_sandbox(active_dir: str) -> ExecutionReport:
+            ctx = PipelineContext(
+                execution_id=execution_id,
+                planner=planner,
+                raw_planner=raw_planner,
+                workspace_dir=active_dir,
+                manifest_models=manifest_models,
+                report=report,
+            )
 
-        # Build 2-Stage Chain: ContractGate -> GraphAndDbtGate
-        contract_gate = ContractGateHandler()
-        graph_dbt_gate = GraphAndDbtGateHandler()
-        contract_gate.set_next(graph_dbt_gate)
+            # Build 2-Stage Chain: ContractGate -> GraphAndDbtGate
+            contract_gate = ContractGateHandler()
+            graph_dbt_gate = GraphAndDbtGateHandler()
+            contract_gate.set_next(graph_dbt_gate)
 
-        # Execute chain starting at Stage 1
-        contract_gate.handle(ctx)
+            # Execute chain starting at Stage 1
+            contract_gate.handle(ctx)
 
-        return ctx.report
+            # Capture all synthesized artifacts into artifact_store before sandbox teardown
+            captured = artifact_store.capture_artifacts(execution_id, active_dir)
+            ctx.report.artifacts["captured_count"] = len(captured)
+            ctx.report.artifacts["captured_files"] = [c.path for c in captured]
+
+            # Save report to server-side execution store
+            execution_store.save(ctx.report)
+            return ctx.report
+
+        if self.workspace_dir:
+            return _execute_in_sandbox(self.workspace_dir)
+        else:
+            with tempfile.TemporaryDirectory(prefix=f"de_agent_{execution_id}_") as temp_dir:
+                return _execute_in_sandbox(temp_dir)

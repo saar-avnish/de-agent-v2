@@ -1,6 +1,0 @@
-enterprise_dw:
-  target: dev
-  outputs:
-    dev:
-      type: duckdb
-      path: "{{ env_var('DBT_PROFILES_DIR', '.') }}/dev.duckdb"

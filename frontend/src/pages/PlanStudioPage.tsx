@@ -252,8 +252,6 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
 }) => {
   const [jsonText, setJsonText] = useState(JSON.stringify(planner, null, 2));
   const [jsonError, setJsonError] = useState<string | null>(null);
-  const [dbtInitStatus, setDbtInitStatus] = useState<string | null>(null);
-  const [isInitializing, setIsInitializing] = useState(false);
   const [executing, setExecuting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -261,6 +259,18 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
     setJsonText(val);
     try {
       const parsed = JSON.parse(val);
+      setPlanner(parsed);
+      setJsonError(null);
+    } catch (e: any) {
+      setJsonError(e.message);
+    }
+  };
+
+  const handleFormatJson = () => {
+    try {
+      const parsed = JSON.parse(jsonText);
+      const formatted = JSON.stringify(parsed, null, 2);
+      setJsonText(formatted);
       setPlanner(parsed);
       setJsonError(null);
     } catch (e: any) {
@@ -296,19 +306,6 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
     reader.readAsText(file);
   };
 
-  const handleTriggerDbtInit = async () => {
-    try {
-      setIsInitializing(true);
-      setDbtInitStatus('Initializing dbt workspace...');
-      const res = await apiClient.initDbtWorkspace(planner.project_name, planner.warehouse);
-      setDbtInitStatus(`✓ ${res.message}`);
-    } catch (err: any) {
-      setDbtInitStatus(`✗ ${err.message}`);
-    } finally {
-      setIsInitializing(false);
-    }
-  };
-
   const handleRunToStage2 = async () => {
     setExecuting(true);
     try {
@@ -332,51 +329,11 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
 
   return (
     <div className="page-content">
-      {/* Workspace Bar */}
-      <div
-        className="card"
-        style={{
-          marginBottom: '1.5rem',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '0.85rem 1.25rem',
-          background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <span style={{ fontSize: '0.85rem', fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>
-            WORKSPACE STATUS:
-          </span>
-          <span className="badge badge-staging">DuckDB Ready</span>
-          {dbtInitStatus && (
-            <span
-              style={{
-                fontSize: '0.8rem',
-                color: dbtInitStatus.startsWith('✓') ? 'var(--accent-green)' : 'var(--accent-cyan)',
-              }}
-            >
-              {dbtInitStatus}
-            </span>
-          )}
-        </div>
-
-        <button
-          type="button"
-          className="btn btn-secondary"
-          style={{ fontSize: '0.8rem', padding: '0.4rem 0.85rem' }}
-          onClick={handleTriggerDbtInit}
-          disabled={isInitializing}
-        >
-          {isInitializing ? 'Bootstrapping...' : '⚡ Initialize dbt Workspace'}
-        </button>
-      </div>
-
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
-          <h1 className="page-title">Page 1: Plan Studio & Synthesis Hub</h1>
+          <h1 className="page-title">Page 1: Plan Studio &amp; Synthesis Hub</h1>
           <p className="page-desc">
-            Define Kimball & Medallion data engineering contracts, column-level data tests, and native dbt 1.8+ TDD fixtures.
+            Define Kimball &amp; Medallion data contracts, column-level data tests, and native dbt 1.8+ TDD fixtures.
             Inspect GoF materialization strategies and trigger Stage 1 &rarr; Stage 2 validation and synthesis.
           </p>
         </div>
@@ -392,8 +349,8 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
         </button>
       </div>
 
-      {/* Preset & File Upload Bar */}
-      <div className="card" style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      {/* Preset & Action Strip */}
+      <div className="card" style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
         <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
             SCENARIO PRESETS:
@@ -425,6 +382,15 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
           >
             📁 Upload planner.json
           </button>
+
+          <button
+            className="btn btn-secondary"
+            style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }}
+            onClick={handleFormatJson}
+            title="Prettify JSON indentation"
+          >
+            ✨ Format JSON
+          </button>
         </div>
 
         <div style={{ display: 'flex', gap: '1rem', fontSize: '0.85rem' }}>
@@ -435,14 +401,14 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
       </div>
 
       <div className="grid-2">
-        {/* Visual Model Hierarchy & Strategy Routing */}
+        {/* Pre-Flight Visual Model Hierarchy & Strategy Routing */}
         <div className="card">
           <div className="card-title">
-            <span>Proposed Models & GoF Strategy Preview</span>
+            <span>Pre-Flight Model Hierarchy &amp; Strategy Preview</span>
             <span className="badge badge-strategy">Medallion / Kimball</span>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '550px', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '560px', overflowY: 'auto' }}>
             {planner.models?.map((model, idx) => {
               const strat = getStrategyLabel(model);
               return (
@@ -488,7 +454,7 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
           </div>
         </div>
 
-        {/* Live JSON Editor */}
+        {/* Live Monospace JSON Editor */}
         <div className="card">
           <div className="card-title">
             <span>planner.json Contract Editor</span>
@@ -507,7 +473,7 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
 
           <textarea
             className="form-textarea"
-            style={{ width: '100%', height: '510px' }}
+            style={{ width: '100%', height: '520px' }}
             value={jsonText}
             onChange={(e) => handleJsonChange(e.target.value)}
           />

@@ -1,7 +1,11 @@
 from __future__ import annotations
+import re
 from enum import Enum
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+IDENTIFIER_REGEX = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 class ModelLayer(str, Enum):
@@ -21,15 +25,23 @@ class ColumnSpec(BaseModel):
     data_type: str = Field(default="varchar", description="Data warehouse data type")
     description: Optional[str] = Field(default=None, description="Column documentation")
     is_pii: bool = Field(default=False, description="Whether this column holds personally identifiable information")
-    pii_type: Optional[str] = Field(default=None, description="PII category e.g. SSN, EMAIL, PHONE, FINANCIAL, IP")
+    pii_type: Optional[str] = Field(default=None, description="PII category e.g. SSN, EMAIL, PHONE, FINANCIAL, PASSPORT, IP")
     data_tests: List[str] = Field(default_factory=list, description="dbt column data tests (e.g. unique, not_null)")
     quote: Optional[bool] = Field(default=None, description="Whether column name requires quotes")
+
+    @field_validator("name")
+    @classmethod
+    def validate_column_identifier(cls, v: str) -> str:
+        v = v.strip()
+        if not IDENTIFIER_REGEX.match(v):
+            raise ValueError(f"Column name '{v}' is not a valid SQL identifier (must match ^[a-zA-Z_][a-zA-Z0-9_]*$).")
+        return v
 
     @model_validator(mode="after")
     def validate_pii_governance(self) -> ColumnSpec:
         if self.is_pii and (not self.pii_type or not self.pii_type.strip()):
             raise ValueError(
-                f"PII Governance violation: Column '{self.name}' is flagged as is_pii=True but lacks mandatory pii_type classification (e.g., SSN, EMAIL, PHONE, FINANCIAL, IP)."
+                f"PII Governance violation: Column '{self.name}' is flagged as is_pii=True but lacks mandatory pii_type classification (e.g., SSN, EMAIL, PHONE, FINANCIAL, PASSPORT, IP)."
             )
         return self
 
@@ -64,14 +76,14 @@ class ModelSpec(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def validate_name_not_empty(cls, v: str) -> str:
+    def validate_model_identifier(cls, v: str) -> str:
         v = v.strip()
-        if not v:
-            raise ValueError("Model name must not be empty.")
+        if not IDENTIFIER_REGEX.match(v):
+            raise ValueError(f"Model name '{v}' is not a valid SQL identifier (must match ^[a-zA-Z_][a-zA-Z0-9_]*$).")
         return v
 
     @model_validator(mode="after")
-    def validate_medallion_prefix_and_scd(self) -> ModelSpec:
+    def validate_medallion_prefix_and_kimball(self) -> ModelSpec:
         name = self.name.lower()
         layer = self.layer
 
@@ -111,6 +123,14 @@ class SourceTableSpec(BaseModel):
     description: Optional[str] = None
     columns: List[ColumnSpec] = Field(default_factory=list)
 
+    @field_validator("name")
+    @classmethod
+    def validate_table_name(cls, v: str) -> str:
+        v = v.strip()
+        if not IDENTIFIER_REGEX.match(v):
+            raise ValueError(f"Source table name '{v}' is not a valid SQL identifier.")
+        return v
+
 
 class SourceSpec(BaseModel):
     name: str = Field(..., min_length=1)
@@ -119,10 +139,26 @@ class SourceSpec(BaseModel):
     description: Optional[str] = None
     tables: List[SourceTableSpec] = Field(default_factory=list)
 
+    @field_validator("name")
+    @classmethod
+    def validate_source_name(cls, v: str) -> str:
+        v = v.strip()
+        if not IDENTIFIER_REGEX.match(v):
+            raise ValueError(f"Source name '{v}' is not a valid SQL identifier.")
+        return v
+
 
 class PlannerContract(BaseModel):
     project_name: str = Field(default="de_agent_project", min_length=1)
-    warehouse: str = Field(default="duckdb", description="Target warehouse adapter: duckdb, bigquery, snowflake, databricks")
+    warehouse: str = Field(default="duckdb", description="Target warehouse adapter: duckdb, bigquery, snowflake")
     domain: str = Field(..., min_length=1)
     sources: List[SourceSpec] = Field(default_factory=list)
     models: List[ModelSpec] = Field(default_factory=list)
+
+    @field_validator("project_name")
+    @classmethod
+    def validate_project_name(cls, v: str) -> str:
+        v = v.strip()
+        if not IDENTIFIER_REGEX.match(v):
+            raise ValueError(f"Project name '{v}' is not a valid identifier.")
+        return v

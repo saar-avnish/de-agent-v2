@@ -1,17 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { apiClient } from '../services/api';
-import { HealthStatus } from '../types';
+import { HealthStatus, RuntimeConfig } from '../types';
 
 interface NavbarProps {
   activePage: 'studio' | 'monitor';
   setActivePage: (page: 'studio' | 'monitor') => void;
-  workspaceReady?: boolean;
+  runtimeConfig?: RuntimeConfig | null;
+  onOpenDbtInit: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   activePage,
   setActivePage,
-  workspaceReady = true,
+  runtimeConfig,
+  onOpenDbtInit,
 }) => {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [isOnline, setIsOnline] = useState<boolean>(true);
@@ -31,6 +33,13 @@ export const Navbar: React.FC<NavbarProps> = ({
     return () => clearInterval(interval);
   }, []);
 
+  const warehouseName = runtimeConfig?.warehouse
+    ? runtimeConfig.warehouse.toUpperCase()
+    : 'DUCKDB';
+  const dialectLabel = runtimeConfig?.warehouse === 'duckdb' || !runtimeConfig
+    ? ':memory:'
+    : runtimeConfig.dialect_path;
+
   return (
     <nav className="navbar">
       <div className="nav-brand">
@@ -49,11 +58,38 @@ export const Navbar: React.FC<NavbarProps> = ({
           className={`nav-tab ${activePage === 'monitor' ? 'active' : ''}`}
           onClick={() => setActivePage('monitor')}
         >
-          📊 2. Gate Monitor & Artifacts
+          📊 2. Gate Monitor &amp; Artifacts
         </button>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        {/* Modal-Only dbt Init / Runtime Configuration Trigger */}
+        <button
+          type="button"
+          onClick={onOpenDbtInit}
+          className="btn btn-secondary"
+          style={{
+            padding: '0.35rem 0.85rem',
+            fontSize: '0.8rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            borderColor: 'rgba(6, 182, 212, 0.4)',
+            background: 'rgba(6, 182, 212, 0.08)',
+          }}
+          title="Click to configure warehouse dialect and run dbt init"
+        >
+          <span
+            className="status-dot"
+            style={{ backgroundColor: 'var(--accent-cyan)' }}
+          ></span>
+          <span>
+            Runtime: <strong style={{ color: '#38bdf8' }}>{warehouseName}</strong> ({dialectLabel})
+          </span>
+          <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>⚙ Setup</span>
+        </button>
+
+        {/* Backend Online Indicator */}
         <div className="session-indicator" title="Backend Gateway Health Status">
           <span
             className="status-dot"
@@ -65,20 +101,13 @@ export const Navbar: React.FC<NavbarProps> = ({
             }}
           ></span>
           <span style={{ fontWeight: 600, fontSize: '0.8rem' }}>
-            {isOnline ? 'Backend: Online' : 'Backend: Offline'}
+            {isOnline ? 'Online' : 'Offline'}
           </span>
           {health && (
             <span className="badge badge-staging" style={{ fontSize: '0.68rem' }}>
               {health.stage_max}
             </span>
           )}
-        </div>
-
-        <div className="session-indicator" title="Local Analytics Warehouse Profile">
-          <span className="status-dot" style={{ backgroundColor: 'var(--accent-cyan)' }}></span>
-          <span style={{ fontWeight: 600, fontSize: '0.8rem' }}>
-            Workspace: {workspaceReady ? 'Ready (DuckDB)' : 'Pending Init'}
-          </span>
         </div>
       </div>
     </nav>

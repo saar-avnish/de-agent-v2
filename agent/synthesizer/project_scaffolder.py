@@ -43,7 +43,21 @@ PROFILES_TEMPLATE = """
   outputs:
     dev:
       type: {{ warehouse }}
-      path: "{% raw %}{{ env_var('DBT_PROFILES_DIR', '.') }}{% endraw %}/dev.duckdb"
+      {% if warehouse == 'duckdb' %}path: ":memory:"
+      {% elif warehouse == 'bigquery' %}method: oauth
+      project: "{{ project_name }}"
+      dataset: "analytics"
+      threads: 4
+      {% elif warehouse == 'snowflake' %}account: "mock_account"
+      user: "mock_user"
+      password: "mock_password"
+      role: "mock_role"
+      database: "analytics"
+      warehouse: "mock_wh"
+      schema: "public"
+      threads: 4
+      {% else %}path: ":memory:"
+      {% endif %}
 """
 
 
@@ -94,7 +108,7 @@ class ProjectScaffolder:
         ).strip()
         (self.workspace_dir / "dbt_project.yml").write_text(dbt_project_content, encoding="utf-8")
 
-        # 2. Scaffold profiles.yml
+        # 2. Scaffold profiles.yml with in-memory duckdb or configured warehouse
         profiles_content = Template(PROFILES_TEMPLATE).render(
             project_name=planner.project_name,
             warehouse=planner.warehouse or "duckdb"

@@ -86,9 +86,19 @@ export interface ExecutionReport {
 export interface WorkspaceFile {
   path: string;
   name: string;
+  category?: 'yaml' | 'sql' | 'logs' | string;
   extension: string;
   size_bytes: number;
   content: string;
+}
+
+export interface RuntimeConfig {
+  project_name: string;
+  warehouse: string;
+  dialect_path: string;
+  artifact_backend: string;
+  status: string;
+  message: string;
 }
 
 export interface HealthStatus {

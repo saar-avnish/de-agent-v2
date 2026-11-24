@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
+import { DbtInitModal } from './components/DbtInitModal';
 import { PlanStudioPage } from './pages/PlanStudioPage';
 import { GateMonitorPage } from './pages/GateMonitorPage';
-import { PlannerContract, ExecutionReport } from './types';
+import { PlannerContract, ExecutionReport, RuntimeConfig } from './types';
 import { apiClient } from './services/api';
 
 const INITIAL_PLANNER: PlannerContract = {
@@ -110,14 +111,18 @@ export const App: React.FC = () => {
   const [activePage, setActivePage] = useState<'studio' | 'monitor'>('studio');
   const [planner, setPlanner] = useState<PlannerContract>(INITIAL_PLANNER);
   const [executionReport, setExecutionReport] = useState<ExecutionReport | null>(null);
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(null);
+  const [isDbtModalOpen, setIsDbtModalOpen] = useState(false);
 
-  // Sync latest execution on load from backend state store (purely server-persisted)
+  // Sync latest execution and runtime config on load from backend server state
   useEffect(() => {
     apiClient.getLatestExecution()
       .then((report) => setExecutionReport(report))
-      .catch(() => {
-        // No prior execution on server yet
-      });
+      .catch(() => {});
+
+    apiClient.getRuntimeConfig()
+      .then((cfg) => setRuntimeConfig(cfg))
+      .catch(() => {});
   }, []);
 
   const handleExecute = (report: ExecutionReport) => {
@@ -125,11 +130,22 @@ export const App: React.FC = () => {
     setActivePage('monitor');
   };
 
+  const handleRuntimeUpdated = (newConfig: RuntimeConfig) => {
+    setRuntimeConfig(newConfig);
+    setPlanner((prev) => ({
+      ...prev,
+      warehouse: newConfig.warehouse,
+      project_name: newConfig.project_name,
+    }));
+  };
+
   return (
     <div className="app-container">
       <Navbar
         activePage={activePage}
         setActivePage={setActivePage}
+        runtimeConfig={runtimeConfig}
+        onOpenDbtInit={() => setIsDbtModalOpen(true)}
       />
 
       {activePage === 'studio' && (
@@ -147,6 +163,12 @@ export const App: React.FC = () => {
           onBackToStudio={() => setActivePage('studio')}
         />
       )}
+
+      <DbtInitModal
+        isOpen={isDbtModalOpen}
+        onClose={() => setIsDbtModalOpen(false)}
+        onRuntimeUpdated={handleRuntimeUpdated}
+      />
     </div>
   );
 };
