@@ -28,12 +28,13 @@ clean-targets:
 
 models:
   {{ project_name }}:
-    staging:
+    {% if has_staging %}staging:
       +schema: staging
-    intermediate:
+    {% endif %}{% if has_intermediate %}intermediate:
       +schema: intermediate
-    marts:
+    {% endif %}{% if has_marts %}marts:
       +schema: marts
+    {% endif %}
 """
 
 PROFILES_TEMPLATE = """
@@ -42,7 +43,7 @@ PROFILES_TEMPLATE = """
   outputs:
     dev:
       type: {{ warehouse }}
-      path: dev.duckdb
+      path: "{% raw %}{{ env_var('DBT_PROFILES_DIR', '.') }}{% endraw %}/dev.duckdb"
 """
 
 
@@ -75,14 +76,21 @@ class ProjectScaffolder:
                     if sql_file.stem not in active_models:
                         sql_file.unlink(missing_ok=True)
                 for prop_file in d.glob("_*_properties.yml"):
-                    # e.g. _stg_orders_properties.yml -> stg_orders
                     model_stem = prop_file.name[1:-len("_properties.yml")]
                     if model_stem not in active_models:
                         prop_file.unlink(missing_ok=True)
 
+        # Determine active layers to avoid unused configuration warnings in dbt_project.yml
+        has_staging = any(m.layer == ModelLayer.STAGING for m in planner.models)
+        has_intermediate = any(m.layer == ModelLayer.INTERMEDIATE for m in planner.models)
+        has_marts = any(m.layer == ModelLayer.MART for m in planner.models)
+
         # 1. Scaffold dbt_project.yml
         dbt_project_content = Template(DBT_PROJECT_TEMPLATE).render(
-            project_name=planner.project_name
+            project_name=planner.project_name,
+            has_staging=has_staging,
+            has_intermediate=has_intermediate,
+            has_marts=has_marts,
         ).strip()
         (self.workspace_dir / "dbt_project.yml").write_text(dbt_project_content, encoding="utf-8")
 

@@ -3,4 +3,4 @@ enterprise_dw:
   outputs:
     dev:
       type: duckdb
-      path: dev.duckdb
+      path: "{{ env_var('DBT_PROFILES_DIR', '.') }}/dev.duckdb"

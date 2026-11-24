@@ -143,7 +143,6 @@ def test_valid_planner_schema_parses_successfully():
 
 def test_model_prefix_enforcement():
     data = sample_valid_planner_dict()
-    # Staging model with bad prefix
     data["models"][0]["name"] = "crm_orders_bad_prefix"
     with pytest.raises(ValidationError) as exc:
         PlannerContract.model_validate(data)
@@ -152,7 +151,6 @@ def test_model_prefix_enforcement():
 
 def test_dim_fct_layer_prefix_enforcement():
     data = sample_valid_planner_dict()
-    # Mart layer model must start with dim_ or fct_
     data["models"][1]["name"] = "orders_mart"
     with pytest.raises(ValidationError) as exc:
         PlannerContract.model_validate(data)
@@ -177,7 +175,6 @@ def test_empty_grain_rejected():
 
 def test_scd_type_2_metadata_validation():
     data = sample_valid_planner_dict()
-    # Add a dimension with scd_type 2
     dim_customer = {
         "name": "dim_customers",
         "layer": "mart",
@@ -212,3 +209,14 @@ def test_pii_flag_and_classification():
     )
     assert col.is_pii is True
     assert col.pii_type == "SSN"
+
+
+def test_pii_governance_missing_type_rejected():
+    with pytest.raises(ValidationError) as exc:
+        ColumnSpec(
+            name="customer_ssn",
+            data_type="varchar",
+            is_pii=True,
+            pii_type=None,
+        )
+    assert "pii_type" in str(exc.value).lower()

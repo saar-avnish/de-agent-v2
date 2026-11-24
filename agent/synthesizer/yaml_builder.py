@@ -50,6 +50,11 @@ class YamlBuilder:
                         }
                         if col.description:
                             col_dict["description"] = col.description
+                        if col.is_pii:
+                            col_dict["meta"] = {
+                                "is_pii": True,
+                                "pii_type": col.pii_type or "UNSPECIFIED",
+                            }
                         if col.data_tests:
                             col_dict["data_tests"] = col.data_tests
                         col_entries.append(col_dict)
@@ -79,6 +84,11 @@ class YamlBuilder:
             }
             if col.description:
                 col_dict["description"] = col.description
+            if col.is_pii:
+                col_dict["meta"] = {
+                    "is_pii": True,
+                    "pii_type": col.pii_type or "UNSPECIFIED",
+                }
             if col.data_tests:
                 col_dict["data_tests"] = col.data_tests
             columns_data.append(col_dict)

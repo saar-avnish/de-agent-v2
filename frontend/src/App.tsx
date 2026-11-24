@@ -1,16 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
-import { LoginAccessPage } from './pages/LoginAccessPage';
 import { PlanStudioPage } from './pages/PlanStudioPage';
 import { GateMonitorPage } from './pages/GateMonitorPage';
-import { SecurityContext, PlannerContract, ExecutionReport } from './types';
-
-const INITIAL_SECURITY_CONTEXT: SecurityContext = {
-  user_id: 'lead_alice',
-  role: 'lead_engineer',
-  allowed_domains: ['sales', 'marketing', 'core', 'finance'],
-  pii_clearance: true,
-};
+import { PlannerContract, ExecutionReport } from './types';
+import { apiClient } from './services/api';
 
 const INITIAL_PLANNER: PlannerContract = {
   project_name: 'enterprise_dw',
@@ -114,43 +107,43 @@ const INITIAL_PLANNER: PlannerContract = {
 };
 
 export const App: React.FC = () => {
-  const [activePage, setActivePage] = useState<'auth' | 'studio' | 'monitor'>('studio');
-  const [securityContext, setSecurityContext] = useState<SecurityContext>(INITIAL_SECURITY_CONTEXT);
-  const [sessionId, setSessionId] = useState<string>('dev-default-session');
+  const [activePage, setActivePage] = useState<'studio' | 'monitor'>('studio');
   const [planner, setPlanner] = useState<PlannerContract>(INITIAL_PLANNER);
   const [executionReport, setExecutionReport] = useState<ExecutionReport | null>(null);
+
+  // Sync latest execution on load from backend state store (purely server-persisted)
+  useEffect(() => {
+    apiClient.getLatestExecution()
+      .then((report) => setExecutionReport(report))
+      .catch(() => {
+        // No prior execution on server yet
+      });
+  }, []);
+
+  const handleExecute = (report: ExecutionReport) => {
+    setExecutionReport(report);
+    setActivePage('monitor');
+  };
 
   return (
     <div className="app-container">
       <Navbar
         activePage={activePage}
         setActivePage={setActivePage}
-        securityContext={securityContext}
       />
-
-      {activePage === 'auth' && (
-        <LoginAccessPage
-          securityContext={securityContext}
-          setSecurityContext={setSecurityContext}
-          setSessionId={setSessionId}
-          onProceed={() => setActivePage('studio')}
-        />
-      )}
 
       {activePage === 'studio' && (
         <PlanStudioPage
           planner={planner}
           setPlanner={setPlanner}
-          securityContext={securityContext}
-          sessionId={sessionId}
-          setExecutionReport={setExecutionReport}
-          onExecute={() => setActivePage('monitor')}
+          onExecute={handleExecute}
         />
       )}
 
       {activePage === 'monitor' && (
         <GateMonitorPage
           report={executionReport}
+          setReport={setExecutionReport}
           onBackToStudio={() => setActivePage('studio')}
         />
       )}

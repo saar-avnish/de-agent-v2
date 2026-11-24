@@ -21,9 +21,17 @@ class ColumnSpec(BaseModel):
     data_type: str = Field(default="varchar", description="Data warehouse data type")
     description: Optional[str] = Field(default=None, description="Column documentation")
     is_pii: bool = Field(default=False, description="Whether this column holds personally identifiable information")
-    pii_type: Optional[str] = Field(default=None, description="PII category e.g. SSN, EMAIL, PHONE, IP")
+    pii_type: Optional[str] = Field(default=None, description="PII category e.g. SSN, EMAIL, PHONE, FINANCIAL, IP")
     data_tests: List[str] = Field(default_factory=list, description="dbt column data tests (e.g. unique, not_null)")
     quote: Optional[bool] = Field(default=None, description="Whether column name requires quotes")
+
+    @model_validator(mode="after")
+    def validate_pii_governance(self) -> ColumnSpec:
+        if self.is_pii and (not self.pii_type or not self.pii_type.strip()):
+            raise ValueError(
+                f"PII Governance violation: Column '{self.name}' is flagged as is_pii=True but lacks mandatory pii_type classification (e.g., SSN, EMAIL, PHONE, FINANCIAL, IP)."
+            )
+        return self
 
 
 class TddFixtureGivenSpec(BaseModel):
@@ -89,7 +97,6 @@ class ModelSpec(BaseModel):
             existing_col_names = {c.name.lower() for c in self.columns}
             required_scd2_fields = ["valid_from", "valid_to", "is_current"]
             missing = [f for f in required_scd2_fields if f not in existing_col_names]
-            # If missing, automatically append them so contracts are enterprise-grade and complete
             for f in missing:
                 if f in ["valid_from", "valid_to"]:
                     self.columns.append(ColumnSpec(name=f, data_type="timestamp", description=f"SCD2 {f} timestamp"))

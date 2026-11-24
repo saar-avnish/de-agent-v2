@@ -1,21 +1,3 @@
-export type UserRole = 'admin' | 'lead_engineer' | 'data_engineer' | 'analyst' | 'guest';
-
-export interface SecurityContext {
-  user_id: string;
-  role: UserRole;
-  allowed_domains: string[];
-  pii_clearance: boolean;
-}
-
-export interface AuthSessionResponse {
-  session_id: string;
-  user_id: string;
-  role: UserRole;
-  allowed_domains: string[];
-  pii_clearance: boolean;
-  status: string;
-}
-
 export type ModelLayer = 'staging' | 'intermediate' | 'mart';
 export type ScdType = 'type_0' | 'type_1' | 'type_2';
 
@@ -103,6 +85,15 @@ export interface ExecutionReport {
 
 export interface WorkspaceFile {
   path: string;
+  name: string;
+  extension: string;
   size_bytes: number;
   content: string;
+}
+
+export interface HealthStatus {
+  status: string;
+  service: string;
+  stage_max: string;
+  stages: string[];
 }

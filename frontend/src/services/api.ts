@@ -1,23 +1,17 @@
 import {
-  SecurityContext,
-  AuthSessionResponse,
   PlannerContract,
   ExecutionReport,
   WorkspaceFile,
+  HealthStatus,
 } from '../types';
 
 const API_BASE = '/api';
 
 export const apiClient = {
-  async createSession(secCtx: SecurityContext): Promise<AuthSessionResponse> {
-    const res = await fetch(`${API_BASE}/auth/session`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(secCtx),
-    });
+  async getHealth(): Promise<HealthStatus> {
+    const res = await fetch('/health');
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Failed to create session' }));
-      throw new Error(err.detail || 'Session creation failed');
+      throw new Error('Health check failed');
     }
     return res.json();
   },
@@ -37,28 +31,38 @@ export const apiClient = {
 
   async runStagesToStage2(
     planner: PlannerContract,
-    secCtx: SecurityContext,
-    sessionId?: string
+    manifestModels?: Record<string, any>
   ): Promise<ExecutionReport> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (sessionId) {
-      headers['X-Session-ID'] = sessionId;
-    }
-
     const res = await fetch(`${API_BASE}/stages/run-to-stage-2`, {
       method: 'POST',
-      headers,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         planner,
-        security_context: secCtx,
+        manifest_models: manifestModels,
       }),
     });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Pipeline execution failed' }));
       throw new Error(err.detail || 'Stage run failed');
+    }
+    return res.json();
+  },
+
+  async getLatestExecution(): Promise<ExecutionReport> {
+    const res = await fetch(`${API_BASE}/stages/executions/latest`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to fetch latest execution' }));
+      throw new Error(err.detail || 'No prior execution');
+    }
+    return res.json();
+  },
+
+  async getExecution(execId: string): Promise<ExecutionReport> {
+    const res = await fetch(`${API_BASE}/stages/executions/${execId}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Execution not found' }));
+      throw new Error(err.detail || 'Execution not found');
     }
     return res.json();
   },

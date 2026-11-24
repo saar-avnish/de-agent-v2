@@ -1,14 +1,11 @@
-import React, { useState } from 'react';
-import { PlannerContract, SecurityContext, ExecutionReport } from '../types';
+import React, { useState, useRef } from 'react';
+import { PlannerContract, ExecutionReport } from '../types';
 import { apiClient } from '../services/api';
 
 interface PlanStudioPageProps {
   planner: PlannerContract;
   setPlanner: (p: PlannerContract) => void;
-  securityContext: SecurityContext;
-  sessionId?: string;
-  setExecutionReport: (report: ExecutionReport) => void;
-  onExecute: () => void;
+  onExecute: (report: ExecutionReport) => void;
 }
 
 const TEMPLATES: Record<string, PlannerContract> = {
@@ -129,7 +126,72 @@ const TEMPLATES: Record<string, PlannerContract> = {
       },
     ],
   },
-  pii_simulation: {
+  saas_billing: {
+    project_name: 'saas_analytics',
+    warehouse: 'duckdb',
+    domain: 'finance',
+    sources: [
+      {
+        name: 'stripe_raw',
+        tables: [
+          {
+            name: 'charges',
+            columns: [
+              { name: 'charge_id', data_type: 'varchar' },
+              { name: 'customer_id', data_type: 'varchar' },
+              { name: 'amount_cents', data_type: 'integer' },
+              { name: 'created_at', data_type: 'timestamp' },
+            ],
+          },
+        ],
+      },
+    ],
+    models: [
+      {
+        name: 'stg_stripe_charges',
+        layer: 'staging',
+        domain: 'finance',
+        estimated_row_count: 85000,
+        is_time_series: false,
+        grain: ['charge_id'],
+        dependencies: ["source('stripe_raw', 'charges')"],
+        columns: [
+          { name: 'charge_id', data_type: 'varchar', data_tests: ['unique', 'not_null'] },
+          { name: 'customer_id', data_type: 'varchar', data_tests: ['not_null'] },
+          { name: 'amount_usd', data_type: 'numeric' },
+        ],
+        tdd_fixtures: [
+          {
+            test_name: 'test_cents_to_usd_conversion',
+            given: [
+              {
+                input: "source('stripe_raw', 'charges')",
+                rows: [{ charge_id: 'ch_1', customer_id: 'cus_1', amount_cents: 2900 }],
+              },
+            ],
+            expect: {
+              rows: [{ charge_id: 'ch_1', customer_id: 'cus_1', amount_usd: 29.0 }],
+            },
+          },
+        ],
+      },
+      {
+        name: 'fct_mrr_movements',
+        layer: 'mart',
+        domain: 'finance',
+        estimated_row_count: 1200000,
+        is_time_series: true,
+        grain: ['charge_id'],
+        dependencies: ["ref('stg_stripe_charges')"],
+        columns: [
+          { name: 'charge_id', data_type: 'varchar', data_tests: ['unique', 'not_null'] },
+          { name: 'mrr_delta', data_type: 'numeric' },
+        ],
+        tdd_fixtures: [],
+      },
+    ],
+  },
+  pii_violation: {
     project_name: 'enterprise_dw',
     warehouse: 'duckdb',
     domain: 'sales',
@@ -145,13 +207,13 @@ const TEMPLATES: Record<string, PlannerContract> = {
         dependencies: [],
         columns: [
           { name: 'customer_id', data_type: 'integer' },
-          { name: 'social_security_num', data_type: 'varchar', is_pii: true, pii_type: 'SSN' },
+          { name: 'social_security_num', data_type: 'varchar', is_pii: true, pii_type: '' },
         ],
         tdd_fixtures: [],
       },
     ],
   },
-  cycle_simulation: {
+  dag_cycle: {
     project_name: 'cyclical_pipeline',
     warehouse: 'duckdb',
     domain: 'sales',
@@ -186,15 +248,14 @@ const TEMPLATES: Record<string, PlannerContract> = {
 export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
   planner,
   setPlanner,
-  securityContext,
-  sessionId,
-  setExecutionReport,
   onExecute,
 }) => {
   const [jsonText, setJsonText] = useState(JSON.stringify(planner, null, 2));
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [dbtInitStatus, setDbtInitStatus] = useState<string | null>(null);
+  const [isInitializing, setIsInitializing] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleJsonChange = (val: string) => {
     setJsonText(val);
@@ -216,24 +277,45 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
     }
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const content = event.target?.result as string;
+        const parsed = JSON.parse(content);
+        setPlanner(parsed);
+        setJsonText(JSON.stringify(parsed, null, 2));
+        setJsonError(null);
+      } catch (err: any) {
+        setJsonError(`File parse failed: ${err.message}`);
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const handleTriggerDbtInit = async () => {
     try {
-      setDbtInitStatus('Initializing workspace...');
+      setIsInitializing(true);
+      setDbtInitStatus('Initializing dbt workspace...');
       const res = await apiClient.initDbtWorkspace(planner.project_name, planner.warehouse);
       setDbtInitStatus(`✓ ${res.message}`);
     } catch (err: any) {
       setDbtInitStatus(`✗ ${err.message}`);
+    } finally {
+      setIsInitializing(false);
     }
   };
 
   const handleRunToStage2 = async () => {
     setExecuting(true);
     try {
-      const report = await apiClient.runStagesToStage2(planner, securityContext, sessionId);
-      setExecutionReport(report);
-      onExecute();
+      const report = await apiClient.runStagesToStage2(planner);
+      onExecute(report);
     } catch (err: any) {
-      alert(`Pipeline error: ${err.message}`);
+      alert(`Pipeline execution error: ${err.message}`);
     } finally {
       setExecuting(false);
     }
@@ -250,63 +332,98 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
 
   return (
     <div className="page-content">
+      {/* Workspace Bar */}
+      <div
+        className="card"
+        style={{
+          marginBottom: '1.5rem',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '0.85rem 1.25rem',
+          background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <span style={{ fontSize: '0.85rem', fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>
+            WORKSPACE STATUS:
+          </span>
+          <span className="badge badge-staging">DuckDB Ready</span>
+          {dbtInitStatus && (
+            <span
+              style={{
+                fontSize: '0.8rem',
+                color: dbtInitStatus.startsWith('✓') ? 'var(--accent-green)' : 'var(--accent-cyan)',
+              }}
+            >
+              {dbtInitStatus}
+            </span>
+          )}
+        </div>
+
+        <button
+          type="button"
+          className="btn btn-secondary"
+          style={{ fontSize: '0.8rem', padding: '0.4rem 0.85rem' }}
+          onClick={handleTriggerDbtInit}
+          disabled={isInitializing}
+        >
+          {isInitializing ? 'Bootstrapping...' : '⚡ Initialize dbt Workspace'}
+        </button>
+      </div>
+
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
-          <h1 className="page-title">Page 2: Plan Studio & Synthesis Hub</h1>
+          <h1 className="page-title">Page 1: Plan Studio & Synthesis Hub</h1>
           <p className="page-desc">
             Define Kimball & Medallion data engineering contracts, column-level data tests, and native dbt 1.8+ TDD fixtures.
-            Inspect GoF materialization strategies and trigger Stage 1 &rarr; 1.5 &rarr; 2 execution.
+            Inspect GoF materialization strategies and trigger Stage 1 &rarr; Stage 2 validation and synthesis.
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={handleTriggerDbtInit}
-          >
-            🚀 Run `dbt init`
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={handleRunToStage2}
-            disabled={executing || !!jsonError}
-          >
-            {executing ? 'Executing Stage Chain...' : '⚡ Run to Stage 2 &rarr;'}
-          </button>
-        </div>
+        <button
+          type="button"
+          className="btn btn-primary"
+          style={{ fontSize: '0.95rem', padding: '0.75rem 1.5rem' }}
+          onClick={handleRunToStage2}
+          disabled={executing || !!jsonError}
+        >
+          {executing ? 'Executing Validation & Synthesis...' : 'Run Validation & Synthesis →'}
+        </button>
       </div>
 
-      {dbtInitStatus && (
-        <div
-          style={{
-            padding: '0.75rem 1rem',
-            borderRadius: '0.5rem',
-            marginBottom: '1.5rem',
-            backgroundColor: dbtInitStatus.startsWith('✓') ? 'rgba(16, 185, 129, 0.15)' : 'rgba(59, 130, 246, 0.15)',
-            border: '1px solid var(--border-color)',
-            fontSize: '0.875rem',
-          }}
-        >
-          {dbtInitStatus}
-        </div>
-      )}
-
-      {/* Preset & Meta selector */}
+      {/* Preset & File Upload Bar */}
       <div className="card" style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-            SCENARIO TEMPLATES:
+        <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+            SCENARIO PRESETS:
           </span>
-          <button className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleSelectTemplate('ecommerce')}>
+          <button className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }} onClick={() => handleSelectTemplate('ecommerce')}>
             🛒 E-Commerce Medallion
           </button>
-          <button className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleSelectTemplate('pii_simulation')}>
-            🚨 PII Violation Trigger
+          <button className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }} onClick={() => handleSelectTemplate('saas_billing')}>
+            💳 SaaS Billing
           </button>
-          <button className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }} onClick={() => handleSelectTemplate('cycle_simulation')}>
-            🔄 DAG Cycle Trigger
+          <button className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }} onClick={() => handleSelectTemplate('pii_violation')}>
+            🚨 PII Governance Violation
+          </button>
+          <button className="btn btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }} onClick={() => handleSelectTemplate('dag_cycle')}>
+            🔄 DAG Cycle Failure
+          </button>
+
+          <input
+            type="file"
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+            accept=".json"
+            onChange={handleFileUpload}
+          />
+          <button
+            className="btn btn-secondary"
+            style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem', borderColor: 'var(--accent-blue)', color: '#38bdf8' }}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            📁 Upload planner.json
           </button>
         </div>
 
@@ -321,11 +438,11 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
         {/* Visual Model Hierarchy & Strategy Routing */}
         <div className="card">
           <div className="card-title">
-            <span>Proposed Models & GoF Strategy Routing</span>
+            <span>Proposed Models & GoF Strategy Preview</span>
             <span className="badge badge-strategy">Medallion / Kimball</span>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '550px', overflowY: 'auto' }}>
             {planner.models?.map((model, idx) => {
               const strat = getStrategyLabel(model);
               return (
@@ -355,12 +472,12 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
 
                   {model.tdd_fixtures && model.tdd_fixtures.length > 0 && (
                     <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px dashed #1e293b' }}>
-                      <span style={{ fontSize: '0.75rem', color: '#38bdf8', fontWeight: 600 }}>
-                        🧪 Native dbt 1.8+ Unit Tests:
+                      <span className="badge badge-staging" style={{ fontSize: '0.7rem', marginBottom: '0.3rem' }}>
+                        🧪 Native dbt 1.8+ Unit Tests ({model.tdd_fixtures.length})
                       </span>
-                      <ul style={{ fontSize: '0.75rem', color: '#cbd5e1', paddingLeft: '1rem' }}>
+                      <ul style={{ fontSize: '0.75rem', color: '#cbd5e1', paddingLeft: '1rem', marginTop: '0.25rem' }}>
                         {model.tdd_fixtures.map((f) => (
-                          <li key={f.test_name}>{f.test_name} ({f.given?.length} given inputs &rarr; expect rows)</li>
+                          <li key={f.test_name}>{f.test_name} ({f.given?.length} inputs &rarr; expected rows)</li>
                         ))}
                       </ul>
                     </div>
@@ -374,8 +491,12 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
         {/* Live JSON Editor */}
         <div className="card">
           <div className="card-title">
-            <span>planner.json Editor & Contract Validator</span>
-            <span className="badge badge-staging">Stage 1 Input</span>
+            <span>planner.json Contract Editor</span>
+            {jsonError ? (
+              <span className="badge badge-failed">Invalid JSON</span>
+            ) : (
+              <span className="badge badge-passed">Valid JSON</span>
+            )}
           </div>
 
           {jsonError && (
@@ -386,7 +507,7 @@ export const PlanStudioPage: React.FC<PlanStudioPageProps> = ({
 
           <textarea
             className="form-textarea"
-            style={{ width: '100%', height: '520px' }}
+            style={{ width: '100%', height: '510px' }}
             value={jsonText}
             onChange={(e) => handleJsonChange(e.target.value)}
           />

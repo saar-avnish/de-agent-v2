@@ -1,17 +1,36 @@
-import React from 'react';
-import { SecurityContext } from '../types';
+import React, { useEffect, useState } from 'react';
+import { apiClient } from '../services/api';
+import { HealthStatus } from '../types';
 
 interface NavbarProps {
-  activePage: 'auth' | 'studio' | 'monitor';
-  setActivePage: (page: 'auth' | 'studio' | 'monitor') => void;
-  securityContext: SecurityContext;
+  activePage: 'studio' | 'monitor';
+  setActivePage: (page: 'studio' | 'monitor') => void;
+  workspaceReady?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   activePage,
   setActivePage,
-  securityContext,
+  workspaceReady = true,
 }) => {
+  const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const data = await apiClient.getHealth();
+        setHealth(data);
+        setIsOnline(true);
+      } catch {
+        setIsOnline(false);
+      }
+    };
+    checkHealth();
+    const interval = setInterval(checkHealth, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <nav className="navbar">
       <div className="nav-brand">
@@ -21,34 +40,46 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       <div className="nav-links">
         <button
-          className={`nav-tab ${activePage === 'auth' ? 'active' : ''}`}
-          onClick={() => setActivePage('auth')}
-        >
-          🔐 1. Access & RBAC
-        </button>
-        <button
           className={`nav-tab ${activePage === 'studio' ? 'active' : ''}`}
           onClick={() => setActivePage('studio')}
         >
-          📐 2. Plan Studio
+          📐 1. Plan Studio
         </button>
         <button
           className={`nav-tab ${activePage === 'monitor' ? 'active' : ''}`}
           onClick={() => setActivePage('monitor')}
         >
-          📊 3. Gate Monitor & Diff
+          📊 2. Gate Monitor & Artifacts
         </button>
       </div>
 
-      <div className="session-indicator">
-        <span className="status-dot"></span>
-        <span style={{ fontWeight: 600 }}>{securityContext.user_id}</span>
-        <span className="badge badge-staging">{securityContext.role}</span>
-        {securityContext.pii_clearance ? (
-          <span className="badge badge-passed" title="PII Clearance Enabled">PII ✓</span>
-        ) : (
-          <span className="badge badge-failed" title="PII Clearance Disabled">NO PII</span>
-        )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <div className="session-indicator" title="Backend Gateway Health Status">
+          <span
+            className="status-dot"
+            style={{
+              backgroundColor: isOnline ? 'var(--accent-green)' : 'var(--accent-rose)',
+              boxShadow: isOnline
+                ? '0 0 8px rgba(16, 185, 129, 0.6)'
+                : '0 0 8px rgba(244, 63, 94, 0.6)',
+            }}
+          ></span>
+          <span style={{ fontWeight: 600, fontSize: '0.8rem' }}>
+            {isOnline ? 'Backend: Online' : 'Backend: Offline'}
+          </span>
+          {health && (
+            <span className="badge badge-staging" style={{ fontSize: '0.68rem' }}>
+              {health.stage_max}
+            </span>
+          )}
+        </div>
+
+        <div className="session-indicator" title="Local Analytics Warehouse Profile">
+          <span className="status-dot" style={{ backgroundColor: 'var(--accent-cyan)' }}></span>
+          <span style={{ fontWeight: 600, fontSize: '0.8rem' }}>
+            Workspace: {workspaceReady ? 'Ready (DuckDB)' : 'Pending Init'}
+          </span>
+        </div>
       </div>
     </nav>
   );

@@ -1,8 +1,19 @@
 import pytest
 from starlette.testclient import TestClient
 from backend.main import app
+from backend.api import routes
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def isolate_workspace(tmp_path):
+    """Isolates the dbt workspace in a temporary folder during API tests to protect live dbt_workspace/."""
+    ws = tmp_path / "api_test_workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    routes.set_workspace_dir(ws)
+    yield ws
+    routes.reset_workspace_dir()
 
 
 def sample_payload():
@@ -50,12 +61,6 @@ def sample_payload():
                     ]
                 }
             ]
-        },
-        "security_context": {
-            "user_id": "test_lead",
-            "role": "lead_engineer",
-            "allowed_domains": ["sales"],
-            "pii_clearance": True
         }
     }
 
@@ -63,21 +68,9 @@ def sample_payload():
 def test_health_endpoint():
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json()["status"] == "HEALTHY"
-
-
-def test_auth_session_creation():
-    resp = client.post("/api/auth/session", json={
-        "user_id": "engineer_bob",
-        "role": "data_engineer",
-        "allowed_domains": ["sales", "marketing"],
-        "pii_clearance": True
-    })
-    assert resp.status_code == 200
     data = resp.json()
-    assert data["user_id"] == "engineer_bob"
-    assert data["role"] == "data_engineer"
-    assert "sess_" in data["session_id"]
+    assert data["status"] == "HEALTHY"
+    assert "Stage 1: Pydantic v2 Contract & PII Gate" in data["stages"]
 
 
 def test_dbt_init_endpoint():
@@ -95,22 +88,63 @@ def test_run_stages_endpoint_success():
     assert resp.status_code == 200
     report = resp.json()
     assert report["success"] is True
-    assert len(report["stages"]) == 3
+    assert report["short_circuited"] is False
+    assert len(report["stages"]) == 2
     assert report["stages"][0]["status"] == "PASSED"
+    assert report["stages"][0]["stage_name"] == "Stage 1: Pydantic v2 Contract & PII Gate"
     assert report["stages"][1]["status"] == "PASSED"
-    assert report["stages"][2]["status"] == "PASSED"
+    assert report["stages"][1]["stage_name"] == "Stage 2: Graph, Strategy & dbt Synthesis Gate"
 
 
-def test_run_stages_endpoint_short_circuits_on_access_violation():
+def test_run_stages_endpoint_short_circuits_on_invalid_contract():
     payload = sample_payload()
-    # Demote user to unauthorized role
-    payload["security_context"]["role"] = "analyst"
+    # Violate Medallion prefix rule
+    payload["planner"]["models"][0]["name"] = "bad_prefix_customers"
     resp = client.post("/api/stages/run-to-stage-2", json=payload)
     assert resp.status_code == 200
     report = resp.json()
     assert report["success"] is False
     assert report["short_circuited"] is True
-    # Stage 1 passed, Stage 1.5 failed, Stage 2 was not reached
-    assert len(report["stages"]) == 2
-    assert report["stages"][0]["status"] == "PASSED"
-    assert report["stages"][1]["status"] == "FAILED"
+    assert len(report["stages"]) == 1
+    assert report["stages"][0]["status"] == "FAILED"
+
+
+def test_get_latest_execution():
+    payload = sample_payload()
+    run_resp = client.post("/api/stages/run-to-stage-2", json=payload)
+    assert run_resp.status_code == 200
+    exec_id = run_resp.json()["execution_id"]
+
+    resp = client.get("/api/stages/executions/latest")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["execution_id"] == exec_id
+
+
+def test_get_execution_by_id():
+    payload = sample_payload()
+    run_resp = client.post("/api/stages/run-to-stage-2", json=payload)
+    exec_id = run_resp.json()["execution_id"]
+
+    resp = client.get(f"/api/stages/executions/{exec_id}")
+    assert resp.status_code == 200
+    assert resp.json()["execution_id"] == exec_id
+
+
+def test_workspace_files_filtering(isolate_workspace):
+    # Create valid files and binary/excluded files
+    (isolate_workspace / "models" / "staging").mkdir(parents=True, exist_ok=True)
+    (isolate_workspace / "models" / "staging" / "stg_test.sql").write_text("SELECT 1", encoding="utf-8")
+    (isolate_workspace / "models" / "staging" / "_properties.yml").write_text("version: 2", encoding="utf-8")
+    (isolate_workspace / "dev.duckdb").write_bytes(b"\x00\x01\x02binary")
+    (isolate_workspace / ".user.yml").write_text("internal", encoding="utf-8")
+
+    resp = client.get("/api/stages/workspace-files")
+    assert resp.status_code == 200
+    files = resp.json()["files"]
+    file_names = [f["name"] for f in files]
+
+    assert "stg_test.sql" in file_names
+    assert "_properties.yml" in file_names
+    assert "dev.duckdb" not in file_names
+    assert ".user.yml" not in file_names

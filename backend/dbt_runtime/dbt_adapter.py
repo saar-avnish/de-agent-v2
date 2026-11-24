@@ -1,5 +1,5 @@
 from __future__ import annotations
-import subprocess
+import os
 import shutil
 import re
 from pathlib import Path
@@ -29,7 +29,7 @@ class DbtAdapter:
         return self.ANSI_ESCAPE.sub("", text)
 
     def run_command(self, args: List[str], timeout_seconds: int = 60) -> DbtCommandResult:
-        """Executes a dbt CLI command with project and profiles directory flags."""
+        """Executes a dbt CLI command with project and profiles directory flags and DBT_PROFILES_DIR set."""
         dbt_exe = shutil.which("dbt") or "dbt"
         cmd = [
             dbt_exe,
@@ -41,13 +41,18 @@ class DbtAdapter:
             str(self.profiles_dir),
         ]
 
+        env = os.environ.copy()
+        env["DBT_PROFILES_DIR"] = str(self.profiles_dir).replace("\\", "/")
+
         try:
+            import subprocess
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
                 check=False,
+                env=env,
             )
             stdout = self._strip_ansi(proc.stdout or "")
             stderr = self._strip_ansi(proc.stderr or "")
@@ -65,15 +70,6 @@ class DbtAdapter:
                 stderr=stderr,
                 success=success,
                 error_summary=error_summary,
-            )
-        except subprocess.TimeoutExpired:
-            return DbtCommandResult(
-                command=" ".join(cmd),
-                exit_code=124,
-                stdout="",
-                stderr=f"Command timed out after {timeout_seconds} seconds",
-                success=False,
-                error_summary="Execution timed out",
             )
         except Exception as ex:
             return DbtCommandResult(
