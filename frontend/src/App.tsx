@@ -140,7 +140,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${activePage === 'monitor' ? 'app-container--locked' : ''}`}>
       <Navbar
         activePage={activePage}
         setActivePage={setActivePage}
