@@ -67,6 +67,7 @@ class ModelSpec(BaseModel):
     layer: ModelLayer = Field(..., description="Medallion layer: staging, intermediate, mart")
     domain: str = Field(..., min_length=1, description="Business domain e.g. sales, finance, marketing")
     estimated_row_count: int = Field(default=0, ge=0, description="Estimated target row count for materialization routing")
+    row_count: int = Field(default=0, ge=0, description="Target row count, must be non-negative")
     is_time_series: bool = Field(default=False, description="Flag indicating time-series append/merge characteristics")
     grain: List[str] = Field(..., min_length=1, description="Kimball grain / natural primary keys")
     scd_type: Optional[ScdType] = Field(default=None, description="Slowly Changing Dimension type for dimensional models")
@@ -84,24 +85,30 @@ class ModelSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_medallion_prefix_and_kimball(self) -> ModelSpec:
-        name = self.name.lower()
-        layer = self.layer
+        # Synchronize row_count and estimated_row_count if only one is specified
+        if self.row_count != 0 and self.estimated_row_count == 0:
+            self.estimated_row_count = self.row_count
+        elif self.estimated_row_count != 0 and self.row_count == 0:
+            self.row_count = self.estimated_row_count
 
-        # Enforce Medallion / Kimball naming conventions
-        if layer == ModelLayer.STAGING:
+        name = self.name.lower()
+        layer_str = self.layer.value if isinstance(self.layer, ModelLayer) else str(self.layer).lower()
+
+        # Enforce strict Medallion / Kimball naming conventions
+        if layer_str == "staging":
             if not name.startswith("stg_"):
                 raise ValueError(
-                    f"Model prefix violation: Staging model '{self.name}' must start with 'stg_'."
+                    f"Model prefix violation: Model '{self.name}' in layer '{layer_str}' must start with prefix 'stg_'."
                 )
-        elif layer == ModelLayer.INTERMEDIATE:
+        elif layer_str == "intermediate":
             if not name.startswith("int_"):
                 raise ValueError(
-                    f"Model prefix violation: Intermediate model '{self.name}' must start with 'int_'."
+                    f"Model prefix violation: Model '{self.name}' in layer '{layer_str}' must start with prefix 'int_'."
                 )
-        elif layer == ModelLayer.MART:
+        elif layer_str == "mart":
             if not (name.startswith("dim_") or name.startswith("fct_")):
                 raise ValueError(
-                    f"Model prefix violation: Mart model '{self.name}' must start with 'dim_' (Kimball dimension) or 'fct_' (Kimball fact)."
+                    f"Model prefix violation: Model '{self.name}' in layer '{layer_str}' must start with prefix 'dim_' or 'fct_'."
                 )
 
         # Enforce SCD Type-2 metadata validation if specified

@@ -32,6 +32,7 @@ export interface ModelSpec {
   layer: ModelLayer;
   domain: string;
   estimated_row_count: number;
+  row_count?: number;
   is_time_series: boolean;
   grain: string[];
   scd_type?: ScdType;

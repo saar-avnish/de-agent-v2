@@ -159,10 +159,30 @@ def test_dim_fct_layer_prefix_enforcement():
 
 def test_negative_row_count_rejected():
     data = sample_valid_planner_dict()
+    # Test negative estimated_row_count fails with greater_than_equal
     data["models"][0]["estimated_row_count"] = -100
     with pytest.raises(ValidationError) as exc:
         PlannerContract.model_validate(data)
-    assert "greater_than_equal" in str(exc.value) or "row count" in str(exc.value).lower()
+    assert "greater_than_equal" in str(exc.value)
+
+    # Test negative row_count fails with greater_than_equal
+    data_rc = sample_valid_planner_dict()
+    data_rc["models"][0]["row_count"] = -500
+    with pytest.raises(ValidationError) as exc_rc:
+        PlannerContract.model_validate(data_rc)
+    assert "greater_than_equal" in str(exc_rc.value)
+
+
+def test_dim_prefix_in_intermediate_layer_rejected():
+    data = sample_valid_planner_dict()
+    data["models"][0]["name"] = "dim_customer_orders"
+    data["models"][0]["layer"] = "intermediate"
+    with pytest.raises(ValidationError) as exc:
+        PlannerContract.model_validate(data)
+    err_str = str(exc.value)
+    assert "dim_customer_orders" in err_str
+    assert "intermediate" in err_str
+    assert "int_" in err_str
 
 
 def test_empty_grain_rejected():
